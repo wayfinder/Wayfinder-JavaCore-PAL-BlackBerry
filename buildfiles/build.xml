@@ -1,0 +1,176 @@
+<!--
+  Copyright (c) 1999-2010, Vodafone Group Services
+  All rights reserved.
+  
+  Redistribution and use in source and binary forms, with or without 
+  modification, are permitted provided that the following conditions 
+  are met:
+  
+      * Redistributions of source code must retain the above copyright 
+        notice, this list of conditions and the following disclaimer.
+      * Redistributions in binary form must reproduce the above 
+        copyright notice, this list of conditions and the following 
+        disclaimer in the documentation and/or other materials provided 
+        with the distribution.
+      * Neither the name of Vodafone Group Services nor the names of its 
+        contributors may be used to endorse or promote products derived 
+        from this software without specific prior written permission.
+  
+  THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" 
+  AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE 
+  IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE 
+  ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE 
+  LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR 
+  CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF 
+  SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS 
+  INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN 
+  CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING 
+  IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY 
+  OF SUCH DAMAGE.
+-->
+<project>
+
+    <!-- SETUP SECTION -->
+
+    <target name="initpaths">
+
+        <property environment="ENV"/>
+        <echo>Reading developer's config files for paths from:</echo>
+        <echo>../etc/develconfig/${user.name}/antproperties_paths.${ENV.COMPUTERNAME}.txt</echo>
+        <property file="../etc/develconfig/${user.name}/antproperties_paths.${ENV.COMPUTERNAME}.txt" />
+
+        <!-- Enforce setting of temp and dist dir paths to avoid accidental -->
+        <!-- deletion of random folders...                                  -->
+        <fail message="Please set path.tmpdir and path.distdir in your properties file">
+            <condition>
+                <and>
+                    <not>
+                        <isset property="path.tmpdir" />
+                    </not>
+                    <not>
+                        <isset property="path.distdir" />
+                    </not>
+                </and>
+            </condition>
+        </fail>
+        
+        <!-- set it to "dev" to signify that this build was made during -->
+        <!-- development. TeamCity and release builder will send this   -->
+        <!-- as argument instead                                        -->
+        <property name="version" value="dev"/>
+        <echo>Building as version: ${version}</echo>
+    	
+        <property name="path.base" location=".."/>
+        <property name="path.build" location="${path.tmpdir}/build"/>
+        <property name="path.final" location="${path.distdir}/dist"/>
+        <mkdir dir="${path.build}"/>
+        <mkdir dir="${path.final}"/>
+
+        <path id="ref.path.sdk">
+            <fileset dir="${path.jde.blackberry}/lib" includes="net_rim_api.jar" />
+        </path>
+        
+        <path id="ref.path.src">
+            <pathelement location="${path.base}/src" />
+        </path>
+    	
+    	<available file="${path.base}/tclib/pal-sdk.jar" property="path.sdk" value="${path.base}/tclib/pal-sdk.jar"/>
+        <property name="path.sdk" value="${path.base}/lib/pal-sdk.jar"/>
+    	<echo>SDK path is ${path.sdk}</echo>
+
+        <!-- Name of the project -->
+        <property name="project.name" value="Wayfinder Java Core PAL BlackBerry impl"/>
+        <!-- Current Android version -->
+        <property name="sdk.version" value="4.6.0"/>
+    
+    </target>
+
+
+    <target name="clean" 
+            depends="initpaths"
+            description="Deletes the temp and dist dirs">
+        <delete dir="${path.build}" failonerror="true"/>
+        <delete dir="${path.final}" failonerror="true"/>
+    </target>
+
+	
+    <!-- COMPILE SECTION -->
+
+    <target name="compile_javac" 
+         depends="initpaths"
+         description="Compiles the BlackBerry PAL using standard javac">
+
+        <mkdir dir="${path.build}/classes" />
+        <!-- The library will be automatically placed by TeamCity -->
+        <javac bootclasspathref="ref.path.sdk"
+               classpath="${path.sdk}"
+               destdir="${path.build}/classes" 
+               debug="true"
+               debuglevel="line,vars,source"
+               target="1.1"
+        	   source="1.3">
+            <src refid="ref.path.src" />
+        </javac>
+    	
+    	<!-- The library jar file has to be preverified, seeing as this is -->
+    	<!-- based on the micro edition :P                                 -->
+        
+        <path id="ref.path.classpath">
+            <pathelement location="${path.base}/tclib/pal-sdk.jar" />
+            <pathelement location="${path.jde.blackberry}/lib/net_rim_api.jar" />
+        </path>    
+        <property name="cp" refid="ref.path.classpath"/>
+        
+    	<echo>Preverifying class files</echo>
+        <exec executable="${path.jde.blackberry}/bin/preverify">
+        	<arg line="-classpath ${cp}"/>
+        	<arg line="-d ${path.build}/classes"/>
+        	<arg line="${path.build}/classes" />
+        </exec>
+    	
+    </target>
+    
+	
+    <target name="make_pal_jar" 
+            depends="compile_javac"
+            description="Creates a raw, unobfuscated jarfile from the compiled classes">
+
+            <mkdir dir="${path.build}/classes" />
+            <jar destfile="${path.final}/pal-blackberry_${sdk.version}-${version}.jar" basedir="${path.build}/classes">
+                <manifest>
+                      <!-- Who is building this jar? -->
+                      <attribute name="Library-Name" value="PAL BlackBerry ${sdk.version}"/>
+                      <!-- Information about the program itself -->
+                      <attribute name="Vendor" value="Wayfinder Systems AB"/>
+                      <attribute name="Version" value="${version}"/>
+                </manifest>    
+            </jar>  
+    </target>
+	
+	
+	<target name="make_pal_cod"
+	      depends="initpaths"
+	      description="Compiles the BlackBerry PAL using RIM RAPC">
+	
+        <taskdef resource="bb-ant-defs.xml"
+                classpath="${path.tools.bbanttools}/bb-ant-tools.jar"/>
+		
+		<!-- Run the almighty RAPC, praise be to His name -->
+		<!-- Use RIM standard for output module name -->
+		<rapc jdehome="${path.jde.blackberry}"
+			  import="${path.base}/tclib/pal-sdk.jar"
+			  destdir="${path.final}"
+		      output="com_wayfinder_pal_${version}_blackberry_4_6_0">
+		      
+			  <!-- Set cod file properties -->
+			  <jdp type="library" 
+			  	   vendor="Wayfinder" 
+			  	   description="BlackBerry PAL library"/>
+			
+		      <src refid="ref.path.src" />
+		</rapc>
+		
+		<!-- Sign the cod file -->
+	
+	</target>
+</project>
